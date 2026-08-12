@@ -1,60 +1,68 @@
 # The Polite Scraper
 
-A small, polite web scraping pipeline built for FlyRank Internship
+A small, polite web scraping pipeline built for the FlyRank Internship
 Backend Track — Week 5 — Assignment A9.
 
-## Target Classification
-
-### Target
+## Target
 
 Books to Scrape:
 
 https://books.toscrape.com/
 
-### Why this target?
+Books to Scrape is a practice website designed for learning web scraping.
 
-Books to Scrape is a public practice sandbox specifically designed
-for learning and practicing web scraping.
+## Scope
 
-### Scope
+The scraper processes the first three catalogue pages.
 
-This scraper will process only the first three catalogue pages.
-
-The expected scope is:
+Expected:
 
 - 3 catalogue pages
-- 60 unique book pages
+- 60 unique books
 
-### Data to collect
+## Data Collected
 
-For each book, we will collect:
+For each book:
 
 - title
-- product URL
-- price
-- availability
-- rating
+- product_url
+- price_text
+- price_gbp
+- availability_text
+- rating_text
 - description
-- source page
-- fetch timestamp
+- source_page
+- fetched_at
 
-### robots.txt
+## Architecture
 
-The URL:
+The pipeline works in stages:
 
-https://books.toscrape.com/robots.txt
+1. Fetch catalogue pages
+2. Cache HTML locally
+3. Discover book URLs
+4. Follow catalogue `next` links
+5. Fetch book detail pages
+6. Cache detail pages
+7. Extract raw fields
+8. Normalize price values
+9. Validate records with Pydantic
+10. Save valid records
+11. Record invalid records
+12. Generate a run report
 
-returned:
+## Project Structure
 
-404 Not Found
-
-Therefore, no robots.txt file was found.
-
-A missing robots.txt file is not treated as permission to scrape other
-websites. This assignment only targets the Books to Scrape practice
-sandbox.
-
-### Responsible scraping
-
-I will not reuse this code on another site without checking its rules
-and terms first.
+```text
+scraper/
+├── src/
+│   └── scraper/
+│       ├── __init__.py
+│       └── main.py
+├── tests/
+│   └── test_scraper.py
+├── cache/
+├── output/
+├── README.md
+├── .gitignore
+└── pyproject.toml
