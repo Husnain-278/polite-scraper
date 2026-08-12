@@ -3,9 +3,11 @@ from urllib.parse import urljoin
 from datetime import datetime, timezone
 import json
 import time
+import re
 
 import requests
 from bs4 import BeautifulSoup
+from pydantic import BaseModel, HttpUrl, ValidationError
 
 
 BASE_URL = "https://books.toscrape.com/catalogue/page-1.html"
@@ -16,6 +18,18 @@ OUTPUT_DIR = Path("output")
 USER_AGENT = "FlyRankInternship-A9/1.0"
 TIMEOUT = 10
 REQUEST_DELAY = 0.5
+
+
+class BookRecord(BaseModel):
+    title: str
+    product_url: HttpUrl
+    price_text: str
+    price_gbp: float
+    availability_text: str
+    rating_text: str
+    description: str | None
+    source_page: HttpUrl
+    fetched_at: datetime
 
 
 def fetch_page(url: str, cache_file: Path) -> str:
@@ -103,8 +117,10 @@ def discover_book_urls() -> list[tuple[str, str]]:
             catalogue_url,
         )
 
-        for url in book_urls:
-            discovered.append((url, catalogue_url))
+        for book_url in book_urls:
+            discovered.append(
+                (book_url, catalogue_url)
+            )
 
         catalogue_url = find_next_page(
             html,
@@ -128,14 +144,22 @@ def extract_book_record(
 ) -> dict:
     soup = BeautifulSoup(html, "html.parser")
 
-    title_element = soup.select_one("div.product_main h1")
-    price_element = soup.select_one("div.product_main .price_color")
+    title_element = soup.select_one(
+        "div.product_main h1"
+    )
+
+    price_element = soup.select_one(
+        "div.product_main .price_color"
+    )
+
     availability_element = soup.select_one(
         "div.product_main .availability"
     )
+
     rating_element = soup.select_one(
         "div.product_main p.star-rating"
     )
+
     description_element = soup.select_one(
         "#product_description + p"
     )
@@ -153,7 +177,10 @@ def extract_book_record(
     )
 
     availability_text = (
-        availability_element.get_text(" ", strip=True)
+        availability_element.get_text(
+            " ",
+            strip=True,
+        )
         if availability_element
         else None
     )
@@ -161,7 +188,10 @@ def extract_book_record(
     rating_text = None
 
     if rating_element:
-        classes = rating_element.get("class", [])
+        classes = rating_element.get(
+            "class",
+            [],
+        )
 
         rating_classes = [
             value
@@ -173,7 +203,10 @@ def extract_book_record(
             rating_text = rating_classes[0]
 
     description = (
-        description_element.get_text(" ", strip=True)
+        description_element.get_text(
+            " ",
+            strip=True,
+        )
         if description_element
         else None
     )
@@ -186,8 +219,26 @@ def extract_book_record(
         "rating_text": rating_text,
         "description": description,
         "source_page": source_page,
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "fetched_at": datetime.now(timezone.utc),
     }
+
+
+def normalize_price(price_text: str) -> float:
+    value = re.sub(
+        r"[^\d.]",
+        "",
+        price_text,
+    )
+
+    return float(value)
+
+
+def normalize_record(raw_record: dict) -> dict:
+    raw_record["price_gbp"] = normalize_price(
+        raw_record["price_text"]
+    )
+
+    return raw_record
 
 
 def main() -> None:
@@ -195,42 +246,83 @@ def main() -> None:
 
     print(f"discovered_books={len(book_urls)}")
 
-    records = []
+    valid_records = []
+    invalid_records = []
 
     for index, (product_url, source_page) in enumerate(
         book_urls,
         start=1,
     ):
-        cache_file = CACHE_DIR / "books" / f"{index}.html"
-
-        html = fetch_page(
-            product_url,
-            cache_file,
+        cache_file = (
+            CACHE_DIR
+            / "books"
+            / f"{index}.html"
         )
 
-        record = extract_book_record(
-            html,
-            product_url,
-            source_page,
-        )
+        try:
+            html = fetch_page(
+                product_url,
+                cache_file,
+            )
 
-        records.append(record)
+            raw_record = extract_book_record(
+                html,
+                product_url,
+                source_page,
+            )
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            normalized_record = normalize_record(
+                raw_record
+            )
 
-    output_file = OUTPUT_DIR / "raw_books.json"
+            book = BookRecord.model_validate(
+                normalized_record
+            )
 
-    output_file.write_text(
+            valid_records.append(
+                book.model_dump(mode="json")
+            )
+
+        except ValidationError as error:
+            invalid_records.append(
+                {
+                    "url": product_url,
+                    "reason": error.errors(),
+                }
+            )
+
+    OUTPUT_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    books_file = OUTPUT_DIR / "books.json"
+
+    books_file.write_text(
         json.dumps(
-            records,
+            valid_records,
             indent=2,
             ensure_ascii=False,
         ),
         encoding="utf-8",
     )
 
-    print(f"detail_pages={len(records)}")
-    print(f"saved={output_file}")
+    errors_file = OUTPUT_DIR / "errors.json"
+
+    errors_file.write_text(
+        json.dumps(
+            invalid_records,
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    print()
+    print(f"valid_records={len(valid_records)}")
+    print(f"invalid_records={len(invalid_records)}")
+    print(f"books_file={books_file}")
+    print(f"errors_file={errors_file}")
 
 
 if __name__ == "__main__":
